@@ -1,0 +1,91 @@
+# Golden evaluation set: natural-language question -> reference DuckDB SQL.
+# Scored by EXECUTION ACCURACY: the model's query must return the same rows as the reference query
+# (column names ignored, row order ignored unless `ordered: true`, floats rounded to 6 places).
+# Reference SQL is executed against whatever warehouse is being evaluated, so the set works on the
+# demo data and on the real output of the streaming-warehouse project.
+cases:
+  # ---------------- easy: one table, simple filter or aggregate ----------------
+  - {id: e01, difficulty: easy, question: "How many events are in the fact table?",
+     sql: "SELECT COUNT(*) FROM fact_live_events"}
+  - {id: e02, difficulty: easy, question: "How many distinct users appear in the events?",
+     sql: "SELECT COUNT(DISTINCT user_id) FROM fact_live_events"}
+  - {id: e03, difficulty: easy, question: "How many gift events were sent in total?",
+     sql: "SELECT COUNT(*) FROM fact_live_events WHERE event_type = 'gift_sent'"}
+  - {id: e04, difficulty: easy, question: "What is the total coin value of all gifts sent?",
+     sql: "SELECT SUM(gift_value_coins) FROM fact_live_events WHERE event_type = 'gift_sent'"}
+  - {id: e05, difficulty: easy, question: "How many records were quarantined?",
+     sql: "SELECT COUNT(*) FROM quarantine"}
+  - {id: e06, difficulty: easy, question: "How many streamers are in the streamer dimension?",
+     sql: "SELECT COUNT(*) FROM dim_streamer"}
+  - {id: e07, difficulty: easy, question: "What is the most expensive gift and what does it cost?",
+     sql: "SELECT gift_name, coin_value FROM dim_gift ORDER BY coin_value DESC, gift_name LIMIT 1"}
+  - {id: e08, difficulty: easy, question: "How many view events came from Singapore (SG)?",
+     sql: "SELECT COUNT(*) FROM fact_live_events WHERE event_type = 'view' AND country = 'SG'"}
+  - {id: e09, difficulty: easy, question: "What is the average watch time in seconds across view events?",
+     sql: "SELECT AVG(watch_seconds) FROM fact_live_events WHERE event_type = 'view'"}
+  - {id: e10, difficulty: easy, question: "When did the earliest event happen?",
+     sql: "SELECT MIN(event_time) FROM fact_live_events"}
+
+  # ---------------- medium: group by, joins, having, dates ----------------
+  - {id: m01, difficulty: medium, ordered: true, question: "How many events are there of each event type, most frequent first?",
+     sql: "SELECT event_type, COUNT(*) AS n FROM fact_live_events GROUP BY event_type ORDER BY n DESC, event_type"}
+  - {id: m02, difficulty: medium, ordered: true, question: "What is the total gift coin value per country, highest first?",
+     sql: "SELECT country, SUM(gift_value_coins) AS coins FROM fact_live_events WHERE event_type = 'gift_sent' GROUP BY country ORDER BY coins DESC, country"}
+  - {id: m03, difficulty: medium, ordered: true, question: "Who are the top 5 streamers by gift revenue? Show their names and the revenue.",
+     sql: "SELECT s.streamer_name, SUM(f.gift_value_coins) AS coins FROM fact_live_events f JOIN dim_streamer s ON f.streamer_id = s.streamer_id WHERE f.event_type = 'gift_sent' GROUP BY s.streamer_name ORDER BY coins DESC, s.streamer_name LIMIT 5"}
+  - {id: m04, difficulty: medium, question: "How many events came from each device?",
+     sql: "SELECT device, COUNT(*) FROM fact_live_events GROUP BY device"}
+  - {id: m05, difficulty: medium, question: "Which countries have more than 3000 events?",
+     sql: "SELECT country FROM fact_live_events GROUP BY country HAVING COUNT(*) > 3000"}
+  - {id: m06, difficulty: medium, ordered: true, question: "How many events happened on each calendar date?",
+     sql: "SELECT event_date, COUNT(*) FROM fact_live_events GROUP BY event_date ORDER BY event_date"}
+  - {id: m07, difficulty: medium, ordered: true, question: "Which 3 streamers had the most distinct active users? Show the streamer id and the count.",
+     sql: "SELECT streamer_id, COUNT(DISTINCT user_id) AS users FROM fact_live_events GROUP BY streamer_id ORDER BY users DESC, streamer_id LIMIT 3"}
+  - {id: m08, difficulty: medium, question: "What is the average coin value of the gifts actually sent, per gift name?",
+     sql: "SELECT g.gift_name, AVG(f.gift_value_coins) FROM fact_live_events f JOIN dim_gift g ON f.gift_id = g.gift_id WHERE f.event_type = 'gift_sent' GROUP BY g.gift_name"}
+  - {id: m09, difficulty: medium, ordered: true, question: "How many quarantined records are there for each rejection reason, most common first?",
+     sql: "SELECT dq_reason, COUNT(*) AS n FROM quarantine GROUP BY dq_reason ORDER BY n DESC, dq_reason"}
+  - {id: m10, difficulty: medium, question: "How many Rocket gifts were sent?",
+     sql: "SELECT COUNT(*) FROM fact_live_events f JOIN dim_gift g ON f.gift_id = g.gift_id WHERE g.gift_name = 'Rocket' AND f.event_type = 'gift_sent'"}
+  - {id: m11, difficulty: medium, ordered: true, question: "Using the minute-level table, which 5 streamers have the most total views? Show streamer id and total views.",
+     sql: "SELECT streamer_id, SUM(views) AS v FROM agg_streamer_minute GROUP BY streamer_id ORDER BY v DESC, streamer_id LIMIT 5"}
+  - {id: m12, difficulty: medium, ordered: true, question: "Which single streamer-minute had the most gift coins? Show streamer id, window start and the coins.",
+     sql: "SELECT streamer_id, window_start, gift_coins FROM agg_streamer_minute ORDER BY gift_coins DESC, streamer_id, window_start LIMIT 1"}
+  - {id: m13, difficulty: medium, question: "What is the average number of likes per streamer-minute in the minute-level table?",
+     sql: "SELECT AVG(likes) FROM agg_streamer_minute"}
+  - {id: m14, difficulty: medium, question: "What percentage of all events are likes? Round to one decimal place.",
+     sql: "SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE event_type = 'like') / COUNT(*), 1) FROM fact_live_events"}
+  - {id: m15, difficulty: medium, question: "What is the rejection rate, meaning quarantined records as a share of all received records?",
+     sql: "SELECT (SELECT COUNT(*) FROM quarantine) * 1.0 / ((SELECT COUNT(*) FROM quarantine) + (SELECT COUNT(*) FROM fact_live_events))"}
+
+  # ---------------- hard: windows, CTEs, anti-joins, ratios ----------------
+  - {id: h01, difficulty: hard, ordered: true, question: "For each country, which streamer received the most gift coins? Show country, streamer id and coins.",
+     sql: "SELECT country, streamer_id, coins FROM (SELECT country, streamer_id, SUM(gift_value_coins) AS coins, ROW_NUMBER() OVER (PARTITION BY country ORDER BY SUM(gift_value_coins) DESC, streamer_id) AS rn FROM fact_live_events WHERE event_type = 'gift_sent' GROUP BY country, streamer_id) WHERE rn = 1 ORDER BY country"}
+  - {id: h02, difficulty: hard, ordered: true, question: "Rank streamers by total gift coins and show the rank and coins for the top 3.",
+     sql: "SELECT streamer_id, coins, RANK() OVER (ORDER BY coins DESC) AS rnk FROM (SELECT streamer_id, SUM(gift_value_coins) AS coins FROM fact_live_events WHERE event_type = 'gift_sent' GROUP BY streamer_id) ORDER BY rnk, streamer_id LIMIT 3"}
+  - {id: h03, difficulty: hard, question: "How many users sent gifts to more than one distinct streamer?",
+     sql: "SELECT COUNT(*) FROM (SELECT user_id FROM fact_live_events WHERE event_type = 'gift_sent' GROUP BY user_id HAVING COUNT(DISTINCT streamer_id) > 1)"}
+  - {id: h04, difficulty: hard, ordered: true, question: "Which streamers received no gifts at all? List their ids.",
+     sql: "SELECT s.streamer_id FROM dim_streamer s WHERE NOT EXISTS (SELECT 1 FROM fact_live_events f WHERE f.streamer_id = s.streamer_id AND f.event_type = 'gift_sent') ORDER BY s.streamer_id"}
+  - {id: h05, difficulty: hard, ordered: true, question: "For streamer s_003, show a running total of gift coins by minute using the minute-level table.",
+     sql: "SELECT window_start, SUM(gift_coins) OVER (ORDER BY window_start) AS running_coins FROM agg_streamer_minute WHERE streamer_id = 's_003' ORDER BY window_start"}
+  - {id: h06, difficulty: hard, ordered: true, question: "What share of total gift coins does each country account for, as a percentage rounded to 2 decimals, largest first?",
+     sql: "SELECT country, ROUND(100.0 * SUM(gift_value_coins) / SUM(SUM(gift_value_coins)) OVER (), 2) AS pct FROM fact_live_events WHERE event_type = 'gift_sent' GROUP BY country ORDER BY pct DESC, country"}
+  - {id: h07, difficulty: hard, question: "Among users with at least 10 events, what is the average number of events per user?",
+     sql: "WITH per_user AS (SELECT user_id, COUNT(*) AS n FROM fact_live_events GROUP BY user_id HAVING COUNT(*) >= 10) SELECT AVG(n) FROM per_user"}
+  - {id: h08, difficulty: hard, question: "Which hour of the day has the most events? Show the hour and the number of events.",
+     sql: "SELECT EXTRACT(hour FROM event_time) AS hr, COUNT(*) AS n FROM fact_live_events GROUP BY hr ORDER BY n DESC, hr LIMIT 1"}
+  - {id: h09, difficulty: hard, question: "What is the median watch time in seconds for view events?",
+     sql: "SELECT MEDIAN(watch_seconds) FROM fact_live_events WHERE event_type = 'view'"}
+  - {id: h10, difficulty: hard, ordered: true, question: "For each streamer, compute the ratio of like events to view events and show the top 3 streamers by that ratio.",
+     sql: "SELECT streamer_id, COUNT(*) FILTER (WHERE event_type = 'like') * 1.0 / COUNT(*) FILTER (WHERE event_type = 'view') AS ratio FROM fact_live_events GROUP BY streamer_id ORDER BY ratio DESC, streamer_id LIMIT 3"}
+  - {id: h11, difficulty: hard, ordered: true, question: "Which 5 streamer names earned the most coins from Rocket and Lion gifts combined?",
+     sql: "SELECT s.streamer_name, SUM(f.gift_value_coins) AS coins FROM fact_live_events f JOIN dim_streamer s ON f.streamer_id = s.streamer_id JOIN dim_gift g ON f.gift_id = g.gift_id WHERE g.gift_name IN ('Rocket', 'Lion') AND f.event_type = 'gift_sent' GROUP BY s.streamer_name ORDER BY coins DESC, s.streamer_name LIMIT 5"}
+  - {id: h12, difficulty: hard, question: "How many quarantined records belong to a streamer that exists in the streamer dimension?",
+     sql: "SELECT COUNT(*) FROM quarantine q JOIN dim_streamer s ON q.streamer_id = s.streamer_id"}
+  - {id: h13, difficulty: hard, ordered: true, question: "Which streamers have total views in the minute-level table above the average total views per streamer? List their ids.",
+     sql: "WITH t AS (SELECT streamer_id, SUM(views) AS v FROM agg_streamer_minute GROUP BY streamer_id) SELECT streamer_id FROM t WHERE v > (SELECT AVG(v) FROM t) ORDER BY streamer_id"}
+  - {id: h14, difficulty: hard, ordered: true, question: "Which minute window has the highest total views across all streamers? Show the window start and the total.",
+     sql: "SELECT window_start, SUM(views) AS v FROM agg_streamer_minute GROUP BY window_start ORDER BY v DESC, window_start LIMIT 1"}
+  - {id: h15, difficulty: hard, ordered: true, question: "For each device, what share of its events are gifts? Show device and the percentage rounded to 2 decimals, highest first.",
+     sql: "SELECT device, ROUND(100.0 * COUNT(*) FILTER (WHERE event_type = 'gift_sent') / COUNT(*), 2) AS pct FROM fact_live_events GROUP BY device ORDER BY pct DESC, device"}

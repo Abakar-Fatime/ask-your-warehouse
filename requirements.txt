@@ -1,0 +1,7 @@
+duckdb>=1.1
+sqlglot>=25
+pyyaml>=6
+pandas>=2.0
+pyarrow>=14
+numpy>=1.26
+pytest>=8

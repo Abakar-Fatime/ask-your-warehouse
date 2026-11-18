@@ -1,0 +1,99 @@
+# Semantic layer for the live-events warehouse produced by the streaming-warehouse project.
+# The agent only sees what is written here: table/column descriptions, business metric
+# definitions, join hints and a few worked examples. Keep it in sync with the real schema
+# (`python -m ayw check --warehouse <dir>` fails if they drift apart).
+tables:
+  fact_live_events:
+    description: One row per valid, deduplicated live-stream event (views, likes, comments, gifts, follows). The main fact table.
+    columns:
+      event_id: {type: VARCHAR, description: unique event identifier}
+      event_type: {type: VARCHAR, description: "one of view, like, comment, gift_sent, follow"}
+      event_time: {type: TIMESTAMP, description: when the event happened (UTC)}
+      user_id: {type: VARCHAR, description: viewer who produced the event}
+      streamer_id: {type: VARCHAR, description: streamer whose room the event happened in; joins to dim_streamer}
+      room_id: {type: VARCHAR, description: live room identifier}
+      country: {type: VARCHAR, description: viewer country code such as SG, MY, ID, TH, VN, PH}
+      device: {type: VARCHAR, description: "viewer device: ios, android or web"}
+      gift_id: {type: VARCHAR, description: gift sent, only for gift_sent events; joins to dim_gift}
+      gift_value_coins: {type: BIGINT, description: coin value of the gift, only for gift_sent events}
+      watch_seconds: {type: INTEGER, description: seconds watched, only for view events}
+      event_date: {type: DATE, description: calendar date of event_time (partition column)}
+  agg_streamer_minute:
+    description: Pre-aggregated activity per streamer per 1-minute window. Use for minute-level trends and peaks.
+    columns:
+      window_start: {type: TIMESTAMP, description: start of the 1-minute window}
+      window_end: {type: TIMESTAMP, description: end of the 1-minute window}
+      streamer_id: {type: VARCHAR, description: streamer; joins to dim_streamer}
+      views: {type: BIGINT, description: view events in the window}
+      likes: {type: BIGINT, description: like events in the window}
+      comments: {type: BIGINT, description: comment events in the window}
+      gift_coins: {type: BIGINT, description: total coin value of gifts in the window}
+      active_users: {type: BIGINT, description: approximate distinct users in the window}
+  quarantine:
+    description: Records rejected by data-quality rules, with the reason. Not part of the fact table.
+    columns:
+      event_id: {type: VARCHAR, description: event identifier, may be missing}
+      event_type: {type: VARCHAR, description: raw event type as received}
+      event_ts: {type: VARCHAR, description: raw timestamp string as received}
+      user_id: {type: VARCHAR, description: raw user id, may be null}
+      streamer_id: {type: VARCHAR, description: raw streamer id}
+      gift_value_coins: {type: BIGINT, description: raw gift value, may be negative}
+      dq_reason: {type: VARCHAR, description: "why it was rejected: missing_user_id, future_timestamp, bad_event_type, negative_gift_value, unparsable_timestamp"}
+  dim_streamer:
+    description: Streamer dimension, one row per streamer, with the streamer name.
+    columns:
+      streamer_id: {type: VARCHAR, description: streamer key}
+      streamer_name: {type: VARCHAR, description: display name of the streamer}
+  dim_gift:
+    description: Gift catalogue, one row per gift type with its name and price in coins.
+    columns:
+      gift_id: {type: VARCHAR, description: gift key}
+      gift_name: {type: VARCHAR, description: "gift name: Rose, Heart, Panda, Rocket or Lion"}
+      coin_value: {type: BIGINT, description: list price of the gift in coins}
+  dim_country:
+    description: List of country codes seen in the data.
+    columns:
+      country: {type: VARCHAR, description: country code}
+  dim_device:
+    description: List of device types.
+    columns:
+      device: {type: VARCHAR, description: device type}
+
+metrics:
+  - name: gift revenue
+    description: Total coin value of gifts sent. Use gift_sent events only.
+    sql: "SUM(gift_value_coins) FILTER (WHERE event_type = 'gift_sent')"
+    tables: [fact_live_events]
+  - name: engagement
+    description: Engagement events are likes, comments and gifts. Views and follows are not counted.
+    sql: "COUNT(*) FILTER (WHERE event_type IN ('like', 'comment', 'gift_sent'))"
+    tables: [fact_live_events]
+  - name: active users
+    description: Number of distinct user_id values. Always COUNT(DISTINCT user_id) on the fact table.
+    sql: "COUNT(DISTINCT user_id)"
+    tables: [fact_live_events]
+  - name: rejection rate
+    description: Share of received records that were quarantined, quarantine rows divided by quarantine plus fact rows.
+    sql: "(SELECT COUNT(*) FROM quarantine) * 1.0 / ((SELECT COUNT(*) FROM quarantine) + (SELECT COUNT(*) FROM fact_live_events))"
+    tables: [quarantine, fact_live_events]
+
+joins:
+  - fact_live_events.streamer_id = dim_streamer.streamer_id
+  - fact_live_events.gift_id = dim_gift.gift_id
+  - agg_streamer_minute.streamer_id = dim_streamer.streamer_id
+  - quarantine.streamer_id = dim_streamer.streamer_id
+
+notes:
+  - Dialect is DuckDB. Use date_trunc('hour', event_time), strftime, EXTRACT, ROUND, MEDIAN, QUALIFY and FILTER as needed.
+  - "Gift events are rows with event_type = 'gift_sent'; gift_value_coins is NULL for every other event type."
+  - Break ties deterministically by adding the id column to ORDER BY.
+
+# Few-shot examples shown to the model. They must never appear in eval/golden.yaml
+# (tests enforce this) so evaluation measures generalisation, not memorisation.
+examples:
+  - question: How many comment events came from Thailand (TH)?
+    sql: "SELECT COUNT(*) FROM fact_live_events WHERE event_type = 'comment' AND country = 'TH'"
+  - question: Which three gifts have the highest list price, with their prices?
+    sql: "SELECT gift_name, coin_value FROM dim_gift ORDER BY coin_value DESC, gift_name LIMIT 3"
+  - question: What is the total views per device, highest first?
+    sql: "SELECT device, COUNT(*) AS views FROM fact_live_events WHERE event_type = 'view' GROUP BY device ORDER BY views DESC, device"
