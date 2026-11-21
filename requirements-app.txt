@@ -1,0 +1,1 @@
+streamlit>=1.67   # developed and tested on 1.67.0

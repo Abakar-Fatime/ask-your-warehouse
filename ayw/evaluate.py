@@ -186,3 +186,14 @@ class OracleClient:
         last = messages[0 if len(messages) == 1 else 1]["content"]
         q = last.rsplit("Question: ", 1)[-1].strip()
         return LLMResponse(f"```sql\n{self.by_question.get(q, 'SELECT 1')}\n```")
+
+
+class DemoClient(OracleClient):
+    """Canned answers for the preset questions, so the UI can be tried without a model.
+    It is clearly labelled as a demo everywhere it appears and only knows the preset questions."""
+    def __init__(self, cases: list[Case]):
+        super().__init__(cases)
+        self.name = "demo mode (canned answers, no LLM)"
+
+    def knows(self, question: str) -> bool:
+        return question in self.by_question

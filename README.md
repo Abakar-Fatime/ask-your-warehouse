@@ -14,6 +14,15 @@ It is built around the parts that usually get skipped in text-to-SQL demos:
 It runs on the warehouse produced by [streaming-warehouse](https://github.com/Abakar-Fatime/streaming-warehouse), and ships a
 synthetic demo warehouse with the same schema so everything works out of the box.
 
+## The interface
+
+![Asking a question in the Streamlit interface: answer table, chart, the SQL, and what happened on each attempt](docs/ui-ask.png)
+
+![The "Try to break it" tab: a DROP TABLE statement blocked by the guard, with row counts unchanged](docs/ui-break.png)
+
+_Both screenshots are taken in **demo mode**, which returns canned answers to the example questions so the interface
+can be tried without a model. With Ollama running, the sidebar switches to a real local model and any question works._
+
 ## How it works
 
 ```
@@ -74,7 +83,7 @@ difficulty, mean attempts, blocked attempts, latency p50/p95 and token counts.
 
 ### Is the harness itself trustworthy?
 
-These checks run in the test suite (92 tests):
+These checks run in the test suite (99 tests):
 
 | Check | Result |
 |---|---|
@@ -113,7 +122,8 @@ ollama pull qwen2.5-coder:3b                        # any Ollama model works; sm
 python -m ayw ask "Who are the top 5 streamers by gift revenue?" --model qwen2.5-coder:3b
 python -m ayw chat --model qwen2.5-coder:3b
 python -m ayw eval --model qwen2.5-coder:3b --adversarial
-pytest                                              # 92 tests, none need a model
+pip install -r requirements-app.txt && streamlit run app.py   # chat interface (demo mode works without Ollama)
+pytest                                              # 99 tests, none need a model
 ```
 
 ## Limitations
@@ -139,7 +149,8 @@ ayw/guard.py        SQL guardrails                  ayw/catalog.py     semantic 
 ayw/engine.py       read-only DuckDB engine         ayw/agent.py       prompt, repair loop
 ayw/llm.py          Ollama client + test doubles    ayw/evaluate.py    harness, adversarial run
 ayw/demo_data.py    synthetic warehouse             ayw/cli.py         command line
+app.py              Streamlit interface (ask, try to break it, evaluation results)
 catalog/warehouse.yaml   tables, metrics, joins, few-shot examples
 eval/golden.yaml    40 questions + reference SQL    eval/adversarial.yaml   hostile prompts
-tests/              92 tests
+tests/              99 tests
 ```
