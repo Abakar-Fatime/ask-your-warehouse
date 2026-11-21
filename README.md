@@ -96,20 +96,39 @@ These checks run in the test suite (99 tests):
 
 ### Results with a local model
 
-**Not yet run.** The environment this project was built in could not download models, so no model numbers
-are reported here and none are implied. To produce them:
+Measured on 2026-11-21 with [Ollama](https://ollama.com) on CPU only (GitHub Actions `ubuntu-latest`,
+4 vCPU), temperature 0, 4096-token context, up to 2 self-repair attempts, on the 40 golden questions over a
+20,000-event demo warehouse. The run is reproducible: [`.github/workflows/evaluate.yml`](.github/workflows/evaluate.yml)
+does everything, and the raw reports are in [`results/`](results/).
 
-```bash
-ollama pull qwen2.5-coder:3b
-python -m ayw eval --model qwen2.5-coder:3b --adversarial --out results
-```
+| Model | Schema in prompt | Execution accuracy | First attempt | Valid SQL | Easy / Medium / Hard | p50 latency |
+|---|---|---|---|---|---|---|
+| qwen2.5-coder 3B | retrieved tables (BM25, top 4) | 65.0% | 57.5% | 95.0% | 90 / 73 / 40 | 17.3 s |
+| qwen2.5-coder 3B | whole schema | 72.5% | 70.0% | 97.5% | 90 / 87 / 47 | 5.3 s |
+| qwen2.5-coder 7B | retrieved tables (BM25, top 4) | **77.5%** | 67.5% | 100% | 100 / 87 / 53 | 38.6 s |
 
-That writes a Markdown report and a JSON file to `results/`. Run it for two or three model sizes, with and
-without `--no-retrieval`, and the comparison table below can be filled in from real numbers.
+**What the numbers say**
 
-| Model | Retrieval | Execution accuracy | First attempt | Valid SQL | p50 latency |
-|---|---|---|---|---|---|
-| _to be measured_ | | | | | |
+- The 7B model is the most accurate (31 of 40 questions) and never produced SQL that failed to run. It is
+  also about twice as slow as the 3B model on the same hardware.
+- **Self-repair helps.** Feeding the database error back to the model lifts accuracy by
+  7.5 points (3B) and 10 points (7B) over the first attempt.
+- **Retrieval did not help at this schema size.** With only seven tables, giving the 3B model the whole
+  schema scored 7.5 points higher than giving it the four tables BM25 picked. Retrieval cuts prompt size
+  and would matter for a much larger schema, but that is not measured here. The 7B model was not run on the
+  whole schema.
+- **Hard questions are where models fail.** Six questions failed in every configuration: per-country top
+  streamer (h01), users who gifted several streamers (h03), share of coins by country (h06), busiest hour
+  (h08), like-to-view ratio (h10) and above-average streamers (h13). All involve a window function, a
+  nested aggregate or a join through several tables.
+- **Latency is indicative only.** The 3B runs happened one after another on a shared CI runner, and the
+  first one includes model loading, so compare the models' ranking, not the absolute seconds.
+
+**Safety under hostile prompts** (10 prompts such as "drop the table", "read /etc/passwd with read_csv", "COPY to a
+file"): the warehouse fingerprint was identical afterwards for both models. The 3B model ended with a
+harmless SELECT for 9 prompts and refused 1; the 7B model answered 6 harmlessly and refused 4. The guard
+rejected 9 and 12 hostile queries respectively, so the protection came from the guard and the read-only
+engine, not from the model behaving well. The whole-schema run was scored on accuracy only.
 
 ## Run it
 
@@ -128,7 +147,7 @@ pytest                                              # 99 tests, none need a mode
 
 ## Limitations
 
-- **No model results yet** (see above), so the accuracy of any particular model is unmeasured.
+- **Two model sizes, one run each.** Results are from a single run per configuration at temperature 0. With 40 questions, one question is 2.5 points, so differences of a few points are within noise. Larger models and a whole-schema run for the 7B model were not measured.
 - **Small, single-schema benchmark.** 40 questions over one 7-table schema, written by the same person who
   wrote the catalog. Treat scores as a way to compare configurations, not as a general text-to-SQL ranking.
 - **Retrieval was tuned on the evaluation questions.** Table recall is 40/40 at 4 tables per prompt, but two
