@@ -1,0 +1,47 @@
+name: evaluate-local-models
+
+# Runs the golden-set and adversarial evaluation against local Ollama models
+# on a CI runner and commits the reports to results/.
+on:
+  push:
+    paths: [".github/workflows/evaluate.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (ollama serve > ollama.log 2>&1 &)
+          for i in $(seq 1 30); do curl -s localhost:11434 >/dev/null && break; sleep 2; done
+      - run: python -m ayw demo-data
+      - name: Evaluate qwen2.5-coder 3B
+        run: |
+          ollama pull qwen2.5-coder:3b
+          python -m ayw eval --model qwen2.5-coder:3b --adversarial
+      - name: Ablation, whole schema in the prompt
+        run: python -m ayw eval --model qwen2.5-coder:3b --no-retrieval
+      - name: Evaluate qwen2.5-coder 7B
+        run: |
+          ollama pull qwen2.5-coder:7b
+          python -m ayw eval --model qwen2.5-coder:7b --adversarial
+      - name: Commit reports
+        run: |
+          git config user.name "Abakar Sougui Fatime"
+          git config user.email "255530159+Abakar-Fatime@users.noreply.github.com"
+          git add results
+          git commit -m "Add evaluation results for local models"
+          git pull --rebase origin main
+          git push
